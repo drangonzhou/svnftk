@@ -1,5 +1,6 @@
 # Prerequisites
 *.d
+*.zzdep
 
 # Compiled Object files
 *.slo
@@ -30,3 +31,7 @@
 *.exe
 *.out
 *.app
+
+# Temp file
+*.swp
+

@@ -31,9 +31,9 @@ GCC ?= gcc
 GXX ?= g++
 GAR ?= ar
 
-CFLAGS += -g -Wall -pipe -I.. 
+CFLAGS += -g -Wall -pipe -I.. -I../libdgn
 CFLAGS += -fno-rtti -fno-exceptions 
-LDFLAGS +=
+LDFLAGS += -L../libdgn -ldgnbase
 
 mingw32_IMPLIB = $(DSO_TARGET:.so=.dll).a
 mingw64_IMPLIB = $(mingw32_IMPLIB)

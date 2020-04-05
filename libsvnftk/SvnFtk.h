@@ -17,6 +17,10 @@
 #ifndef INCLUDED_SVNFTK_H
 #define INCLUDED_SVNFTK_H
 
-#include <stdint.h>
+#include <dgn/dgn.h> // int64_t
+
+#define BEGIN_NS_SVNFTK namespace svnftk {
+#define END_NS_SVNFTK }
 
 #endif // INCLUDED_SVNFTK_H
+

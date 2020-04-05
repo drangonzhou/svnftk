@@ -16,6 +16,9 @@
 
 #include "SvnDumpFile.h"
 
+#include <vector>
+#include <stdio.h>
+
 BEGIN_NS_SVNFTK
 ////////////////
 
@@ -54,8 +57,11 @@ int DumpFile::Seek( int64_t pos )
 const DRecord * DumpFile::Read()
 {
 	// TODO : 暂不支持 header 超过 4k
-	char buf[4096];
+	std::vector< char > vbuf;
+	vbuf.resize( 4096 );
+	char * buf = NULL;
 	int len = 0;
+	buf = &vbuf[0];
 	if( m_fp.Seek( m_nextpos ) < 0 )
 		return NULL;
 	len = m_fp.Read( buf, 4096 - 1 );
@@ -77,7 +83,7 @@ const DRecord * DumpFile::Read()
 	DRecoreType_e type = DRecord::FindType( key );
 	if( type == DRecordType_Unknown )
 		return NULL;
-	if( type != m_rd->GetType() ) {
+	if( m_rd == NULL || type != m_rd->GetType() ) {
 		delete m_rd;
 		m_rd = DRecord::Create( type );
 	}
@@ -85,6 +91,7 @@ const DRecord * DumpFile::Read()
 		return NULL;
 	
 	len = m_rd->ParseBuf( buf + headlen );
+	printf( "head len %d\n", len );
 	if( len < 0 )
 		return NULL;
 	headlen += len;
@@ -112,6 +119,7 @@ int DumpFile::WriteBody( const char * buf, int len )
 
 int DRecord::ParseLine( const char * buf, dgn::CStr * key, dgn::CStr * val )
 {
+	// parse one line "key: val\n"
 	const char * p = NULL;
 	const char * p2 = NULL;
 	size_t n = 0;
@@ -139,6 +147,7 @@ int DRecord::ParseLine( const char * buf, dgn::CStr * key, dgn::CStr * val )
 		val->Assign( "" );
 	}
 	else {
+		--p2; // skip '\n'
 		while( *p2 == ' ' || *p2 == '\t' )
 			--p2;
 		val->Assign( p, p2 - p + 1 );
@@ -156,10 +165,10 @@ DRecoreType_e DRecord::FindType( const dgn::CStr & key )
 		return DRecordType_UUID;
 	}
 	else if( key == "Revision-number" ) {
-		return DRecordType_UUID;
+		return DRecordType_Revision;
 	}
 	else if( key == "Node-path" ) {
-		return DRecordType_UUID;
+		return DRecordType_Node;
 	}
 	return DRecordType_Unknown;
 }
@@ -192,6 +201,13 @@ DRecord::DRecord( DRecoreType_e type ) : m_type( type ), m_body_len( 0 )
 
 DRecord::~DRecord()
 {
+}
+
+static const char * s_DRecordType_Str[5] = { "Unknown", "Version", "UUID", "Revision", "Node" };
+
+const char * DRecord::GetTypeStr() const
+{
+	return s_DRecordType_Str[m_type];
 }
 
 DRecordVersion::DRecordVersion() : DRecord( DRecordType_Version ), m_version( 0 )
@@ -288,6 +304,7 @@ int DRecordRevision::ParseBuf( const char * buf )
 		}
 		else {
 			// unknown key
+			printf( "unknown key [%s]\n", key.Str() );
 			return -1;
 		}
 		len += len2;
@@ -337,11 +354,15 @@ int DRecordNode::ParseBuf( const char * buf )
 	int len = 0;
 	dgn::CStr key, val;
 	while( buf[len] != '\n' ) {
-		if( buf[len] == '\0' )
+		if( buf[len] == '\0' ) {
+			printf( "bad buf\n" );
 			return -1;
+		}
 		int len2 = DRecord::ParseLine( buf + len, &key, &val );
-		if( len2 < 0 )
+		if( len2 < 0 ) {
+			printf( "parse line failed\n" );
 			return -1;
+		}
 		if( key == "Node-kind" ) {
 			if( val == "file" ) {
 				m_kind = DRD_NODE_KIND_FILE;
@@ -350,6 +371,7 @@ int DRecordNode::ParseBuf( const char * buf )
 				m_kind = DRD_NODE_KIND_DIR;
 			}
 			else {
+				printf( "bad node kind [%s]\n", val.Str() );
 				return -1;
 			}
 		}
@@ -357,16 +379,17 @@ int DRecordNode::ParseBuf( const char * buf )
 			if( val == "add" ) {
 				m_action = DRD_NODE_ACTION_ADD;
 			}
-			if( val == "change" ) {
+			else if( val == "change" ) {
 				m_action = DRD_NODE_ACTION_CHANGE;
 			}
-			if( val == "delete" ) {
+			else if( val == "delete" ) {
 				m_action = DRD_NODE_ACTION_DELETE;
 			}
-			if( val == "replace" ) {
+			else if( val == "replace" ) {
 				m_action = DRD_NODE_ACTION_REPLACE;
 			}
 			else {
+				printf( "bad node action  [%s]\n", val.Str() );
 				return -1;
 			}
 		}
@@ -405,6 +428,7 @@ int DRecordNode::ParseBuf( const char * buf )
 				m_text_delta = DRD_NODE_BOOL_FALSE;
 			}
 			else {
+				printf( "bad text delta [%s]\n", val.Str() );
 				return -1;
 			}
 		}
@@ -416,6 +440,7 @@ int DRecordNode::ParseBuf( const char * buf )
 				m_prop_delta = DRD_NODE_BOOL_FALSE;
 			}
 			else {
+				printf( "bad prop delta [%s]\n", val.Str() );
 				return -1;
 			}
 		}

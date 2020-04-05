@@ -80,6 +80,7 @@ public:
 	virtual ~DRecord();
 
 	DRecoreType_e GetType() const { return m_type; }
+	const char * GetTypeStr() const;
 	int64_t GetBodyLen() const { return m_body_len; }
 	void SetBodyLen( int64_t len ) { m_body_len = len; return; }
 

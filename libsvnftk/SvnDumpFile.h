@@ -40,6 +40,11 @@ public:
 	int Open( const char * fname );
 	int Close();
 
+	int64_t GetCurrPos() const { return m_currpos; }
+	int GetHeadLen() const { return m_headlen; }
+	int64_t GetBodyLen() const { return m_bodylen; }
+	int64_t GetNextPos() const { return m_currpos + m_headlen + m_bodylen; }
+
 	// seek 到特定的 DRecord 位置，用于读取指定 DRecord，pos 需要在 DReord 边界，否则会分析出错
 	int Seek( int64_t pos );
 
@@ -54,17 +59,42 @@ public:
 
 protected:
 	dgn::File m_fp;
-	int64_t m_nextpos;
+	int64_t m_currpos;
+	int m_headlen;
+	int64_t m_bodylen;
 	DRecord * m_rd;
 };
 
 enum DRecoreType_e
 {
-	DRecordType_Unknown,
-	DRecordType_Version,
-	DRecordType_UUID,
-	DRecordType_Revision,
-	DRecordType_Node,
+	DRD_TYPE_UNKNOWN,
+	DRD_TYPE_VERSION,
+	DRD_TYPE_UUID,
+	DRD_TYPE_REVISION,
+	DRD_TYPE_NODE,
+};
+
+enum DRD_NodeKind_e {
+	DRD_NODE_KIND_INVALID = 0,
+	DRD_NODE_KIND_UNSET = 1, // action是删除时，kind可以不设置
+	DRD_NODE_KIND_FILE = 2,
+	DRD_NODE_KIND_DIR = 3,
+};
+
+enum DRD_NodeAction_e {
+	DRD_NODE_ACTION_INVALID = 0,
+	DRD_NODE_ACTION_UNSET = 1, // 不应该出现
+	DRD_NODE_ACTION_ADD = 2,
+	DRD_NODE_ACTION_CHANGE = 3,
+	DRD_NODE_ACTION_DELETE = 4,
+	DRD_NODE_ACTION_REPLACE = 5,
+};
+
+enum DRD_NodeBool_e {
+	DRD_NODE_BOOL_INVALID = 0,
+	DRD_NODE_BOOL_UNSET = 1,
+	DRD_NODE_BOOL_TRUE = 2,
+	DRD_NODE_BOOL_FALSE = 3,
 };
 
 class DRecord
@@ -75,6 +105,11 @@ public:
 	static DRecoreType_e FindType( const dgn::CStr & key );
 	static DRecord * Create( DRecoreType_e type );
 
+	static const char * GetTypeStr( DRecoreType_e type );
+	static const char * GetNodeKindStr( DRD_NodeKind_e kind );
+	static const char * GetNodeActionStr( DRD_NodeAction_e action );
+	static const char * GetNodeBoolStr( DRD_NodeBool_e val );
+		
 public:
 	DRecord( DRecoreType_e type );
 	virtual ~DRecord();
@@ -134,29 +169,6 @@ public:
 public:
 	int64_t m_revnum;
 	int64_t m_prop_len; // -1 表示未设置，property 长度，应该和 body len 一样
-};
-
-enum DRD_NodeKind_e {
-	DRD_NODE_KIND_INVALID = 0,
-	DRD_NODE_KIND_UNSET = 1, // action是删除时，kind可以不设置
-	DRD_NODE_KIND_FILE = 2,
-	DRD_NODE_KIND_DIR = 3,
-};
-
-enum DRD_NodeAction_e {
-	DRD_NODE_ACTION_INVALID = 0,
-	DRD_NODE_ACTION_UNSET = 1, // 不应该出现
-	DRD_NODE_ACTION_ADD = 2,
-	DRD_NODE_ACTION_CHANGE = 3,
-	DRD_NODE_ACTION_DELETE = 4,
-	DRD_NODE_ACTION_REPLACE = 5,
-};
-
-enum DRD_NodeBool_e {
-	DRD_NODE_BOOL_INVALID = 0,
-	DRD_NODE_BOOL_UNSET = 1,
-	DRD_NODE_BOOL_TRUE = 2,
-	DRD_NODE_BOOL_FALSE = 3,
 };
 
 class DRecordNode : public DRecord

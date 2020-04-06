@@ -22,7 +22,7 @@
 BEGIN_NS_SVNFTK
 ////////////////
 
-DumpFile::DumpFile() : m_nextpos(0), m_rd(NULL)
+DumpFile::DumpFile() : m_currpos(0), m_headlen(0), m_bodylen(0), m_rd(NULL)
 {
 }
 
@@ -33,14 +33,18 @@ DumpFile::~DumpFile()
 
 int DumpFile::Open( const char * fname )
 {
-	m_nextpos = 0;
+	m_currpos = 0;
+	m_headlen = 0;
+	m_bodylen = 0;
 	return m_fp.Open( fname );
 }
 
 int DumpFile::Close()
 {
 	m_fp.Close();
-	m_nextpos = 0;
+	m_currpos = 0;
+	m_headlen = 0;
+	m_bodylen = 0;
 	if( m_rd != NULL )
 		delete m_rd, m_rd = NULL;
 	return 0;
@@ -50,19 +54,18 @@ int DumpFile::Seek( int64_t pos )
 {
 	if( m_fp.Seek( pos ) < 0 )
 		return -1;
-	m_nextpos = pos;
+	m_currpos = pos;
+	m_headlen = 0;
+	m_bodylen = 0;
 	return 0;
 }
 
 const DRecord * DumpFile::Read()
 {
 	// TODO : 暂不支持 header 超过 4k
-	std::vector< char > vbuf;
-	vbuf.resize( 4096 );
-	char * buf = NULL;
+	char buf[4096];
 	int len = 0;
-	buf = &vbuf[0];
-	if( m_fp.Seek( m_nextpos ) < 0 )
+	if( m_fp.Seek( m_currpos + m_headlen + m_bodylen ) < 0 )
 		return NULL;
 	len = m_fp.Read( buf, 4096 - 1 );
 	if( len < 0 )
@@ -81,7 +84,7 @@ const DRecord * DumpFile::Read()
 	headlen += len;
 
 	DRecoreType_e type = DRecord::FindType( key );
-	if( type == DRecordType_Unknown )
+	if( type == DRD_TYPE_UNKNOWN )
 		return NULL;
 	if( m_rd == NULL || type != m_rd->GetType() ) {
 		delete m_rd;
@@ -95,7 +98,9 @@ const DRecord * DumpFile::Read()
 	if( len < 0 )
 		return NULL;
 	headlen += len;
-	m_nextpos += headlen + m_rd->GetBodyLen();
+	m_currpos = m_currpos + m_headlen + m_bodylen;
+	m_headlen = headlen;
+	m_bodylen = m_rd->GetBodyLen();
 	return m_rd;
 }
 
@@ -114,7 +119,9 @@ int DumpFile::Write( const DRecord * rd )
 
 int DumpFile::WriteBody( const char * buf, int len )
 {
-	return m_fp.Write( buf, len );
+	if( m_fp.Write( buf, len ) < 0 || m_fp.Write( "\n\n", 2 ) < 0 )
+		return -1;
+	return 0;
 }
 
 int DRecord::ParseLine( const char * buf, dgn::CStr * key, dgn::CStr * val )
@@ -159,33 +166,33 @@ int DRecord::ParseLine( const char * buf, dgn::CStr * key, dgn::CStr * val )
 DRecoreType_e DRecord::FindType( const dgn::CStr & key )
 {
 	if( key == "SVN-fs-dump-format-version" ) {
-		return DRecordType_Version;
+		return DRD_TYPE_VERSION;
 	}
 	else if( key == "UUID" ) {
-		return DRecordType_UUID;
+		return DRD_TYPE_UUID;
 	}
 	else if( key == "Revision-number" ) {
-		return DRecordType_Revision;
+		return DRD_TYPE_REVISION;
 	}
 	else if( key == "Node-path" ) {
-		return DRecordType_Node;
+		return DRD_TYPE_NODE;
 	}
-	return DRecordType_Unknown;
+	return DRD_TYPE_UNKNOWN;
 }
 
 DRecord * DRecord::Create( DRecoreType_e type )
 {
 	switch( type ) {
-	case DRecordType_Version :
+	case DRD_TYPE_VERSION :
 		return new DRecordVersion();
 		break;
-	case DRecordType_UUID :
+	case DRD_TYPE_UUID :
 		return new DRecordUUID();
 		break;
-	case DRecordType_Revision :
+	case DRD_TYPE_REVISION :
 		return new DRecordRevision();
 		break;
-	case DRecordType_Node :
+	case DRD_TYPE_NODE :
 		return new DRecordNode();
 		break;
 	default :
@@ -193,6 +200,31 @@ DRecord * DRecord::Create( DRecoreType_e type )
 		break;
 	}
 	return NULL;
+}
+
+static const char * s_DRecordType_Str[5] = { "Unknown", "Version", "UUID", "Revision", "Node" };
+static const char * s_NodeKind_Str[4] = { "invalid", "unset", "file", "dir" };
+static const char * s_NodeAction_Str[6] = { "invalid", "unset", "add", "change", "delete", "replace" };
+static const char * s_NodeBool_Str[4] = { "invalid", "unset", "true", "false" };
+
+const char * DRecord::GetTypeStr( DRecoreType_e type )
+{
+	return s_DRecordType_Str[type];
+}
+
+const char * DRecord::GetNodeKindStr( DRD_NodeKind_e kind )
+{
+	return s_NodeKind_Str[kind];
+}
+
+const char * DRecord::GetNodeActionStr( DRD_NodeAction_e action )
+{
+	return s_NodeAction_Str[action];
+}
+
+const char * DRecord::GetNodeBoolStr( DRD_NodeBool_e val )
+{
+	return s_NodeBool_Str[val];
 }
 
 DRecord::DRecord( DRecoreType_e type ) : m_type( type ), m_body_len( 0 )
@@ -203,14 +235,12 @@ DRecord::~DRecord()
 {
 }
 
-static const char * s_DRecordType_Str[5] = { "Unknown", "Version", "UUID", "Revision", "Node" };
-
 const char * DRecord::GetTypeStr() const
 {
-	return s_DRecordType_Str[m_type];
+	return DRecord::GetTypeStr( m_type );
 }
 
-DRecordVersion::DRecordVersion() : DRecord( DRecordType_Version ), m_version( 0 )
+DRecordVersion::DRecordVersion() : DRecord( DRD_TYPE_VERSION ), m_version( 0 )
 {
 }
 
@@ -241,7 +271,7 @@ int DRecordVersion::Write( dgn::File * fp ) const
 	return 0;
 }
 
-DRecordUUID::DRecordUUID() : DRecord( DRecordType_UUID )
+DRecordUUID::DRecordUUID() : DRecord( DRD_TYPE_UUID )
 {
 }
 
@@ -272,7 +302,7 @@ int DRecordUUID::Write( dgn::File * fp ) const
 	return 0;
 }
 
-DRecordRevision::DRecordRevision() : DRecord( DRecordType_Revision ), m_revnum( -1 ), m_prop_len( -1 )
+DRecordRevision::DRecordRevision() : DRecord( DRD_TYPE_REVISION ), m_revnum( -1 ), m_prop_len( -1 )
 {
 }
 
@@ -328,7 +358,7 @@ int DRecordRevision::Write( dgn::File * fp ) const
 }
 
 DRecordNode::DRecordNode() 
-	: DRecord( DRecordType_Node )
+	: DRecord( DRD_TYPE_NODE )
 	, m_kind( DRD_NODE_KIND_UNSET )
 	, m_action( DRD_NODE_ACTION_UNSET )
 	, m_copyfrom_rev( -1 )
@@ -459,21 +489,17 @@ int DRecordNode::ParseBuf( const char * buf )
 	return len + 1;
 }
 
-static const char * s_NodeKind_Str[4] = { "invalid", "unset", "file", "dir" };
-static const char * s_NodeAction_Str[6] = { "invalid", "unset", "add", "change", "delete", "replace" };
-static const char * s_NodeBool_Str[4] = { "invalid", "unset", "true", "false" };
-
 int DRecordNode::Write( dgn::File * fp ) const
 {
 	dgn::CStr str;
 	str.Reserve( 4096 );
 	str.AssignFmt( "Node-path: %s\n", m_path.Str() );
 	if( m_kind == DRD_NODE_KIND_FILE || m_kind == DRD_NODE_KIND_DIR ) {
-		str.AppendFmt( "Node-kind: %s\n", s_NodeKind_Str[m_kind] );
+		str.AppendFmt( "Node-kind: %s\n", DRecord::GetNodeKindStr(m_kind) );
 	}
 	if( m_action == DRD_NODE_ACTION_ADD || m_action == DRD_NODE_ACTION_CHANGE 
 		|| m_action == DRD_NODE_ACTION_DELETE || m_action == DRD_NODE_ACTION_REPLACE ) {
-		str.AppendFmt( "Node-action: %s\n", s_NodeAction_Str[m_action] );
+		str.AppendFmt( "Node-action: %s\n", DRecord::GetNodeActionStr(m_action) );
 	}
 	if( m_copyfrom_path.Len() > 0 ) {
 		str.AppendFmt( "Node-copyfrom-path: %s\nNode-copyfrom-rev: %lld\n", 
@@ -498,10 +524,10 @@ int DRecordNode::Write( dgn::File * fp ) const
 		str.AppendFmt( "Prop-content-length: %lld\n", (long long)m_prop_len );
 	}
 	if( m_text_delta == DRD_NODE_BOOL_TRUE || m_text_delta == DRD_NODE_BOOL_FALSE ) {
-		str.AppendFmt( "Text-delta: %s\n", s_NodeBool_Str[m_text_delta] );
+		str.AppendFmt( "Text-delta: %s\n", DRecord::GetNodeBoolStr(m_text_delta) );
 	}
 	if( m_prop_delta == DRD_NODE_BOOL_TRUE || m_prop_delta == DRD_NODE_BOOL_FALSE ) {
-		str.AppendFmt( "Prop-delta: %s\n", s_NodeBool_Str[m_prop_delta] );
+		str.AppendFmt( "Prop-delta: %s\n", DRecord::GetNodeBoolStr(m_prop_delta) );
 	}
 	if( m_delta_base_md5.Len() > 0 ) {
 		str.AppendFmt( "Text-delta-base-md5: %s\n", m_delta_base_md5.Str() );
